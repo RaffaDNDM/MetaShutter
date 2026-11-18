@@ -52,16 +52,19 @@ When processed, MetaShutter formats and writes the following string into each fi
    ```
 
 3. **Tag & Apply:**
-   * Click **Select Files...** or **Select Folder...** in the startup modal.
+   * Click **Select Files...** or **Select Folder...** in the startup modal (you can also use recursive search).
+
+    ![Startup modal](.images/startup.png)
+
    * Review your selected photos and click the **Exposure Bracketing** or **Focus Stacking** pills on any applicable cards.
+
+    ![Images preview](.images/preview.png)
+    
+    > Hover over a thumbnail to see a larger preview of the image
+
    * Click **Apply & Write EXIF** to update the metadata across all loaded images.
 
 ---
 
 ## ⚙️ Configuration
-
-* **Include Subfolders:** By default, folder selection scans only the top-level directory. To scan nested subfolders recursively, update `main()` in `metashutter.py`:
-  ```python
-  target_files = get_target_files(include_subfolders=True)
-  ```
 * **Supported Formats:** Currently restricted to `.jpg` and `.jpeg` files due to EXIF binary injection requirements.

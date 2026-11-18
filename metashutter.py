@@ -119,14 +119,14 @@ def update_single_caption(image_path, exposure_bracketing=False, focus_stacking=
         print("-> Skipped: Could not extract EXIF shooting parameters.")
 
 
-def get_target_files(include_subfolders=False):
+def get_target_files():
     root = tk.Tk()
     root.title("Select Input")
     root.configure(bg=BG_CARD)
     root.resizable(False, False)
 
-    # Center the popup on screen and force focus
-    w, h = 420, 210
+    # Slightly taller height (245) to comfortably fit the subfolder toggle
+    w, h = 420, 245
     x = (root.winfo_screenwidth() // 2) - (w // 2)
     y = (root.winfo_screenheight() // 2) - (h // 2)
     root.geometry(f"{w}x{h}+{x}+{y}")
@@ -135,6 +135,7 @@ def get_target_files(include_subfolders=False):
     root.attributes("-topmost", True)
 
     files_to_process = []
+    subfolders_var = tk.BooleanVar(value=False)
 
     def pick_files():
         nonlocal files_to_process
@@ -152,7 +153,8 @@ def get_target_files(include_subfolders=False):
         folder = filedialog.askdirectory(parent=root, title="Select a folder")
         if folder:
             folder_path = Path(folder)
-            pattern = folder_path.rglob("*") if include_subfolders else folder_path.glob("*")
+            # Check the BooleanVar state at the moment the folder is picked
+            pattern = folder_path.rglob("*") if subfolders_var.get() else folder_path.glob("*")
             files_to_process = sorted(
                 [
                     str(f.resolve())
@@ -176,7 +178,7 @@ def get_target_files(include_subfolders=False):
         font=("Segoe UI", 9),
         fg=TEXT_MUTED,
         bg=BG_CARD,
-    ).pack(pady=(0, 20))
+    ).pack(pady=(0, 18))
 
     btn_frame = tk.Frame(root, bg=BG_CARD)
     btn_frame.pack()
@@ -210,6 +212,20 @@ def get_target_files(include_subfolders=False):
         cursor="hand2",
         command=pick_folder,
     ).pack(side="left", padx=8)
+
+    # Dark-themed checkbox for recursive subfolder scanning
+    tk.Checkbutton(
+        root,
+        text="Include subfolders when scanning folder",
+        variable=subfolders_var,
+        font=("Segoe UI", 9),
+        fg=TEXT_MUTED,
+        bg=BG_CARD,
+        selectcolor=BG_MAIN,          # Dark background inside the tick box
+        activebackground=BG_CARD,
+        activeforeground=TEXT_PRIMARY,
+        cursor="hand2",
+    ).pack(pady=(16, 0))
 
     root.mainloop()
     return files_to_process
@@ -262,6 +278,9 @@ class CaptionTaggerGUI:
 
         self.file_rows = []
         self.thumbnail_refs = []
+        self.hover_preview = None
+        self.hover_preview_image = None
+        self.hover_preview_after_id = None
 
         self.configure_styles()
         self.setup_ui()
@@ -291,6 +310,74 @@ class CaptionTaggerGUI:
         except Exception as e:
             print(f"Could not create thumbnail for {image_path}: {e}")
             return None
+
+    def show_hover_preview(self, event, image_path):
+        """Show a larger, aspect-ratio-preserving preview while hovering a thumbnail."""
+        self.hide_hover_preview()
+
+        # A short delay avoids opening the popup when the cursor merely passes by.
+        self.hover_preview_after_id = self.root.after(
+            180, lambda: self._create_hover_preview(event, image_path)
+        )
+
+    def _create_hover_preview(self, event, image_path):
+        self.hover_preview_after_id = None
+        try:
+            with Image.open(image_path) as source:
+                preview = ImageOps.exif_transpose(source).copy()
+                preview.thumbnail((520, 420), Image.Resampling.LANCZOS)
+                self.hover_preview_image = ImageTk.PhotoImage(preview)
+
+            popup = tk.Toplevel(self.root)
+            popup.overrideredirect(True)
+            popup.attributes("-topmost", True)
+            popup.configure(bg=BORDER_COLOR)
+
+            image_frame = tk.Frame(popup, bg=BG_CARD, padx=3, pady=3)
+            image_frame.pack()
+            tk.Label(
+                image_frame,
+                image=self.hover_preview_image,
+                bg=BG_CARD,
+                bd=0,
+            ).pack()
+
+            # Keep the popup on-screen, preferring the right side of the thumbnail.
+            popup.update_idletasks()
+            x = event.x_root + 24
+            y = event.y_root + 18
+            popup_width = popup.winfo_reqwidth()
+            popup_height = popup.winfo_reqheight()
+            screen_width = self.root.winfo_screenwidth()
+            screen_height = self.root.winfo_screenheight()
+            if x + popup_width > screen_width:
+                x = event.x_root - popup_width - 18
+            if y + popup_height > screen_height:
+                y = screen_height - popup_height - 12
+            x = max(8, x)
+            y = max(8, y)
+            popup.geometry(f"+{x}+{y}")
+            self.hover_preview = popup
+        except Exception as exc:
+            print(f"Could not show hover preview for {image_path}: {exc}")
+            self.hide_hover_preview()
+
+    def hide_hover_preview(self, event=None):
+        """Cancel a pending preview and close any visible preview popup."""
+        if self.hover_preview_after_id is not None:
+            try:
+                self.root.after_cancel(self.hover_preview_after_id)
+            except tk.TclError:
+                pass
+            self.hover_preview_after_id = None
+
+        if self.hover_preview is not None:
+            try:
+                self.hover_preview.destroy()
+            except tk.TclError:
+                pass
+            self.hover_preview = None
+        self.hover_preview_image = None
 
     def setup_ui(self):
         # Top Header Bar
@@ -398,7 +485,13 @@ class CaptionTaggerGUI:
             thumb_img = self.create_thumbnail(file_str, size=(72, 72))
             if thumb_img:
                 self.thumbnail_refs.append(thumb_img)
-                tk.Label(thumb_box, image=thumb_img, bg="#141418").pack(expand=True)
+                thumb_label = tk.Label(thumb_box, image=thumb_img, bg="#141418", cursor="hand2")
+                thumb_label.pack(expand=True)
+                thumb_label.bind(
+                    "<Enter>",
+                    lambda event, image_path=file_str: self.show_hover_preview(event, image_path),
+                )
+                thumb_label.bind("<Leave>", self.hide_hover_preview)
             else:
                 tk.Label(thumb_box, text="No Preview", font=("Segoe UI", 7), fg=TEXT_MUTED, bg="#141418").pack(expand=True)
 
@@ -494,7 +587,7 @@ class CaptionTaggerGUI:
 
 
 def main():
-    target_files = get_target_files(include_subfolders=False)
+    target_files = get_target_files()
 
     if not target_files:
         print("No JPEG files selected or operation canceled.")
